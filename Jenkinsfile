@@ -106,15 +106,29 @@ pipeline {
         }
     }
 
-    post {
-        always {
-            archiveArtifacts artifacts: 'trivyfs.txt, trivyimage.txt', allowEmptyArchive: true
-            emailext (
-                attachLog: true,
-                to: 'rooseveltaws@gmail.com',
-                subject: "Status: ${currentBuild.currentResult} - Build #${BUILD_NUMBER}",
-                body: "Pipeline finished for ${APP_NAME}. Check results here: ${env.BUILD_URL}"
-            )
+     post {
+    always {
+        emailext attachLog: true,
+            subject: "'${currentBuild.result}'",
+            body: """
+                <html>
+                <body>
+                    <div style="background-color: #FFA07A; padding: 10px; margin-bottom: 10px;">
+                        <p style="color: white; font-weight: bold;">Project: ${env.JOB_NAME}</p>
+                    </div>
+                    <div style="background-color: #90EE90; padding: 10px; margin-bottom: 10px;">
+                        <p style="color: white; font-weight: bold;">Build Number: ${env.BUILD_NUMBER}</p>
+                    </div>
+                    <div style="background-color: #87CEEB; padding: 10px; margin-bottom: 10px;">
+                        <p style="color: white; font-weight: bold;">URL: ${env.BUILD_URL}</p>
+                    </div>
+                </body>
+                </html>
+            """,
+            to: 'rooseveltaws@gmail.com',
+            mimeType: 'text/html',
+            attachmentsPattern: 'trivy.txt'
         }
     }
 }
+
