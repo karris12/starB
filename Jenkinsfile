@@ -57,12 +57,16 @@ pipeline {
         }
 
         stage('OWASP Dependency Check') {
-            steps {
-                dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit',
-                                odcInstallation: 'DP-Check'
-                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
-            }
+    steps {
+        withCredentials([string(credentialsId: 'nvd-api-key', variable: 'C3C22C25-233A-F111-836A-129478FCB64D')]) {
+            dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit --nvdApiKey $NVD_API_KEY',
+                            odcInstallation: 'DP-Check'
+            dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
         }
+    }
+}
+
+
 
         stage('Trivy File System Scan') {
             steps {
