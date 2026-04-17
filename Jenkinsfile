@@ -3,7 +3,7 @@ pipeline {
 
     tools {
         jdk 'jdk17'
-        // Updated to node18 to resolve the EBADENGINE warnings
+        // Resolves the engine version warnings (v16.2.0 was too old)
         nodejs 'node18' 
     }
 
@@ -46,13 +46,14 @@ pipeline {
             steps {
                 script {
                     try {
+                        // Correctly maps your Jenkins secret text to the variable
                         withCredentials([string(credentialsId: 'nvd-api-key', variable: 'NVD_API_KEY')]) {
                             dependencyCheck additionalArguments: "--scan ./ --disableYarnAudit --disableNodeAudit --nvdApiKey ${NVD_API_KEY}",
                                             odcInstallation: 'DP-Check'
                             dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
                         }
                     } catch (Exception e) {
-                        echo "⚠️ OWASP Check failed or Credentials missing. Skipping to keep pipeline moving."
+                        echo "⚠️ Skipping OWASP Check: Credential 'nvd-api-key' not found or scan failed."
                     }
                 }
             }
@@ -64,11 +65,57 @@ pipeline {
 
         stage('Docker Build') {
             steps {
-                sh "ls -la"
+                // Now works perfectly with the renamed 'Dockerfile'
                 sh "docker build -t ${APP_NAME} ."
             }
         }
 
-        // ... remaining stages (Push, Scout, Deploy) stay the same
+        stage('Tag & Push to DockerHub') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
+                        sh "docker tag ${APP_NAME} ${DOCKER_IMAGE}"
+                        sh "docker push ${DOCKER_IMAGE}"
+                    }
+                }
+            }
+        }
+
+        stage('Docker Scout Scan') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
+                        sh "docker-scout quickview ${DOCKER_IMAGE}"
+                        sh "docker-scout cves ${DOCKER_IMAGE}"
+                    }
+                }
+            }
+        }
+
+        stage('Trivy Image Scan') {
+            steps { sh "trivy image ${DOCKER_IMAGE} > trivyimage.txt" }
+        }
+
+        stage('Deploy to Container') {
+            steps {
+                sh """
+                    docker stop ${CONTAINER_NAME} || true
+                    docker rm ${CONTAINER_NAME} || true
+                    docker run -d --name ${CONTAINER_NAME} -p ${HOST_PORT}:${APP_PORT} ${DOCKER_IMAGE}
+                """
+            }
+        }
+    }
+
+    post {
+        always {
+            archiveArtifacts artifacts: 'trivyfs.txt, trivyimage.txt', allowEmptyArchive: true
+            emailext (
+                attachLog: true,
+                to: 'rooseveltaws@gmail.com',
+                subject: "Status: ${currentBuild.currentResult} - Build #${BUILD_NUMBER}",
+                body: "Pipeline finished for ${APP_NAME}. Check results here: ${env.BUILD_URL}"
+            )
+        }
     }
 }
