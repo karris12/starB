@@ -3,7 +3,6 @@ pipeline {
 
     tools {
         jdk 'jdk17'
-        // Resolves the engine version warnings (v16.2.0 was too old)
         nodejs 'node18' 
     }
 
@@ -46,14 +45,13 @@ pipeline {
             steps {
                 script {
                     try {
-                        // Correctly maps your Jenkins secret text to the variable
                         withCredentials([string(credentialsId: 'nvd-api-key', variable: 'NVD_API_KEY')]) {
                             dependencyCheck additionalArguments: "--scan ./ --disableYarnAudit --disableNodeAudit --nvdApiKey ${NVD_API_KEY}",
                                             odcInstallation: 'DP-Check'
                             dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
                         }
                     } catch (Exception e) {
-                        echo "⚠️ Skipping OWASP Check: Credential 'nvd-api-key' not found or scan failed."
+                        echo "⚠️ Skipping OWASP Check: Scan failed or API key issue."
                     }
                 }
             }
@@ -65,7 +63,6 @@ pipeline {
 
         stage('Docker Build') {
             steps {
-                // Now works perfectly with the renamed 'Dockerfile'
                 sh "docker build -t ${APP_NAME} ."
             }
         }
@@ -73,7 +70,8 @@ pipeline {
         stage('Tag & Push to DockerHub') {
             steps {
                 script {
-                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
+                    // Removed toolName to use system Docker client
+                    withDockerRegistry(credentialsId: 'docker-cred') {
                         sh "docker tag ${APP_NAME} ${DOCKER_IMAGE}"
                         sh "docker push ${DOCKER_IMAGE}"
                     }
@@ -84,7 +82,8 @@ pipeline {
         stage('Docker Scout Scan') {
             steps {
                 script {
-                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
+                    // Removed toolName to use system Docker client
+                    withDockerRegistry(credentialsId: 'docker-cred') {
                         sh "docker-scout quickview ${DOCKER_IMAGE}"
                         sh "docker-scout cves ${DOCKER_IMAGE}"
                     }
