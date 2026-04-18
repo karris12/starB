@@ -9,7 +9,8 @@ pipeline {
     environment {
         SCANNER_HOME   = tool 'sonar-scanner'
         APP_NAME       = 'starbucks'
-        DOCKER_IMAGE   = "agodzo/${APP_NAME}:latest"
+        // Using BUILD_NUMBER ensures a unique tag for every deployment
+        DOCKER_IMAGE   = "agodzo/${APP_NAME}:${BUILD_NUMBER}"
         GITHUB_REPO    = 'https://github.com/karris12/starB.git'
         CONTAINER_NAME = 'starbucks-app'
         HOST_PORT      = '3000'
@@ -35,7 +36,6 @@ pipeline {
 
         stage('Quality Gate') {
             steps { 
-                // Increased wait time slightly to avoid timeout errors
                 timeout(time: 1, unit: 'HOURS') {
                     waitForQualityGate abortPipeline: false
                 }
@@ -68,7 +68,8 @@ pipeline {
 
         stage('Docker Build') {
             steps {
-                sh "docker build -t ${APP_NAME} ."
+                // Build with the unique tag
+                sh "docker build -t ${DOCKER_IMAGE} ."
             }
         }
 
@@ -76,8 +77,10 @@ pipeline {
             steps {
                 script {
                     withDockerRegistry(credentialsId: 'docker-cred') {
-                        sh "docker tag ${APP_NAME} ${DOCKER_IMAGE}"
                         sh "docker push ${DOCKER_IMAGE}"
+                        // Also push a 'latest' tag for convenience
+                        sh "docker tag ${DOCKER_IMAGE} agodzo/${APP_NAME}:latest"
+                        sh "docker push agodzo/${APP_NAME}:latest"
                     }
                 }
             }
@@ -86,21 +89,23 @@ pipeline {
         stage('Update GitOps Manifest') {
             steps {
                 script {
-                    // Remove existing directory if it exists to prevent clone failure
+                    // Clean up any old clones before starting
                     sh "rm -rf starbucks-gitops"
                     
-                    withCredentials([usernamePassword(credentialsId: 'github-token', passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {
-                        sh "git clone https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/karris12/starbucks-gitops.git"
+                    // We use the 'github-token' ID you created in Jenkins
+                    withCredentials([string(credentialsId: 'github-token', variable: 'GH_TOKEN')]) {
+                        // Clone using the token for authentication
+                        sh "git clone https://${GH_TOKEN}@github.com/karris12/starbucks-gitops.git"
                         
                         dir('starbucks-gitops') {
+                            // Update the image tag in your K8s deployment file
                             sh "sed -i 's|image: agodzo/starbucks:.*|image: ${DOCKER_IMAGE}|' k8s/deployment.yaml"
                             
                             sh "git config user.email 'jenkins@example.com'"
                             sh "git config user.name 'Jenkins CI'"
                             sh "git add k8s/deployment.yaml"
-                            // Added '|| true' to prevent failure if there are no changes to commit
-                            sh "git commit -m 'Update image build ${env.BUILD_NUMBER}' || true"
-                            sh "git push origin main"
+                            sh "git commit -m 'Update image to build ${env.BUILD_NUMBER}' || echo 'No changes to commit'"
+                            sh "git push https://${GH_TOKEN}@github.com/karris12/starbucks-gitops.git main"
                         }
                     }
                 }
@@ -119,6 +124,7 @@ pipeline {
                             <h3>Build Status: ${currentBuild.result}</h3>
                             <p><b>Project:</b> ${env.JOB_NAME}</p>
                             <p><b>Build Number:</b> ${env.BUILD_NUMBER}</p>
+                            <p><b>Docker Image:</b> ${DOCKER_IMAGE}</p>
                             <p><b>Link:</b> <a href="${env.BUILD_URL}">${env.BUILD_URL}</a></p>
                         </div>
                     </body>
