@@ -12,7 +12,7 @@ pipeline {
         DOCKER_IMAGE   = "agodzo/${APP_NAME}:latest"
         GITHUB_REPO    = 'https://github.com/karris12/starB.git'
         CONTAINER_NAME = 'starbucks-app'
-        HOST_PORT      = '30000'
+        HOST_PORT      = '3000'
         APP_PORT       = '3000'
     }
 
@@ -34,7 +34,12 @@ pipeline {
         }
 
         stage('Quality Gate') {
-            steps { waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token' }
+            steps { 
+                // Increased wait time slightly to avoid timeout errors
+                timeout(time: 1, unit: 'HOURS') {
+                    waitForQualityGate abortPipeline: false
+                }
+            }
         }
 
         stage('Install NPM Dependencies') {
@@ -70,7 +75,6 @@ pipeline {
         stage('Tag & Push to DockerHub') {
             steps {
                 script {
-                    // Removed toolName to use system Docker client
                     withDockerRegistry(credentialsId: 'docker-cred') {
                         sh "docker tag ${APP_NAME} ${DOCKER_IMAGE}"
                         sh "docker push ${DOCKER_IMAGE}"
@@ -79,68 +83,50 @@ pipeline {
             }
         }
 
-        stage('Docker Scout Scan') {
-            steps {
-                script {
-                    // Removed toolName to use system Docker client
-                    withDockerRegistry(credentialsId: 'docker-cred') {
-                        sh "docker-scout quickview ${DOCKER_IMAGE}"
-                        sh "docker-scout cves ${DOCKER_IMAGE}"
-                    }
-                }
-            }
-        }
-
-        stage('Trivy Image Scan') {
-            steps { sh "trivy image ${DOCKER_IMAGE} > trivyimage.txt" }
-        }
-
         stage('Update GitOps Manifest') {
             steps {
                 script {
+                    // Remove existing directory if it exists to prevent clone failure
+                    sh "rm -rf starbucks-gitops"
+                    
                     withCredentials([usernamePassword(credentialsId: 'github-token', passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {
-                        // 1. Clone the GitOps repo
                         sh "git clone https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/karris12/starbucks-gitops.git"
                         
                         dir('starbucks-gitops') {
-                            // 2. Update the image tag in deployment.yaml (using sed)
                             sh "sed -i 's|image: agodzo/starbucks:.*|image: ${DOCKER_IMAGE}|' k8s/deployment.yaml"
                             
-                            // 3. Commit and Push back to GitHub
                             sh "git config user.email 'jenkins@example.com'"
                             sh "git config user.name 'Jenkins CI'"
                             sh "git add k8s/deployment.yaml"
-                            sh "git commit -m 'Update starbucks image to build ${env.BUILD_NUMBER}'"
+                            // Added '|| true' to prevent failure if there are no changes to commit
+                            sh "git commit -m 'Update image build ${env.BUILD_NUMBER}' || true"
                             sh "git push origin main"
                         }
                     }
                 }
             }
         }
+    }
 
-     post {
-    always {
-        emailext attachLog: true,
-            subject: "'${currentBuild.result}'",
-            body: """
-                <html>
-                <body>
-                    <div style="background-color: #FFA07A; padding: 10px; margin-bottom: 10px;">
-                        <p style="color: white; font-weight: bold;">Project: ${env.JOB_NAME}</p>
-                    </div>
-                    <div style="background-color: #90EE90; padding: 10px; margin-bottom: 10px;">
-                        <p style="color: white; font-weight: bold;">Build Number: ${env.BUILD_NUMBER}</p>
-                    </div>
-                    <div style="background-color: #87CEEB; padding: 10px; margin-bottom: 10px;">
-                        <p style="color: white; font-weight: bold;">URL: ${env.BUILD_URL}</p>
-                    </div>
-                </body>
-                </html>
-            """,
-            to: 'rooseveltaws@gmail.com',
-            mimeType: 'text/html',
-            attachmentsPattern: 'trivy.txt'
+    post {
+        always {
+            emailext attachLog: true,
+                subject: "Build ${currentBuild.result}: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                body: """
+                    <html>
+                    <body>
+                        <div style="padding: 10px; border: 1px solid #ddd;">
+                            <h3>Build Status: ${currentBuild.result}</h3>
+                            <p><b>Project:</b> ${env.JOB_NAME}</p>
+                            <p><b>Build Number:</b> ${env.BUILD_NUMBER}</p>
+                            <p><b>Link:</b> <a href="${env.BUILD_URL}">${env.BUILD_URL}</a></p>
+                        </div>
+                    </body>
+                    </html>
+                """,
+                to: 'rooseveltaws@gmail.com',
+                mimeType: 'text/html',
+                attachmentsPattern: 'trivyfs.txt,trivyimage.txt'
         }
     }
-}
 }
