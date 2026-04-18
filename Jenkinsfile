@@ -95,16 +95,28 @@ pipeline {
             steps { sh "trivy image ${DOCKER_IMAGE} > trivyimage.txt" }
         }
 
-        stage('Deploy to Container') {
+        stage('Update GitOps Manifest') {
             steps {
-                sh """
-                    docker stop ${CONTAINER_NAME} || true
-                    docker rm ${CONTAINER_NAME} || true
-                    docker run -d --name ${CONTAINER_NAME} -p ${HOST_PORT}:${APP_PORT} ${DOCKER_IMAGE}
-                """
+                script {
+                    withCredentials([usernamePassword(credentialsId: 'github-token', passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {
+                        // 1. Clone the GitOps repo
+                        sh "git clone https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/karris12/starbucks-gitops.git"
+                        
+                        dir('starbucks-gitops') {
+                            // 2. Update the image tag in deployment.yaml (using sed)
+                            sh "sed -i 's|image: agodzo/starbucks:.*|image: ${DOCKER_IMAGE}|' k8s/deployment.yaml"
+                            
+                            // 3. Commit and Push back to GitHub
+                            sh "git config user.email 'jenkins@example.com'"
+                            sh "git config user.name 'Jenkins CI'"
+                            sh "git add k8s/deployment.yaml"
+                            sh "git commit -m 'Update starbucks image to build ${env.BUILD_NUMBER}'"
+                            sh "git push origin main"
+                        }
+                    }
+                }
             }
         }
-    }
 
      post {
     always {
